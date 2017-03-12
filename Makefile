@@ -1,4 +1,5 @@
 CXX ?= g++
+GO  ?= go
 
 SRCDIR := src
 BUILDDIR := build
@@ -24,3 +25,7 @@ $(BUILDDIR)/%.o: $(SRCDIR)/%.$(SRCEXT)
 .PHONY: clean
 clean:
 	$(RM) -r $(BUILDDIR) $(TARGETDIR)
+
+.PHONY: test
+test: $(TARGET)
+	@$(GO) test -v ./test
