@@ -451,7 +451,6 @@ void Process::LaunchMulticastSender() {
       });
     }
     sender_threads.JoinAll();
-    sender_threads.Clear();
 
     // Determine the maximum sequence number from all receivers. This is the
     // final sequence number for the multicast message.
