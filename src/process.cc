@@ -17,7 +17,7 @@ uint32_t RandomUint32() {
   static thread_local std::seed_seq seed{r(), r(), r(), r(), r()};
   static thread_local std::default_random_engine random_engine(seed);
 
-  std::uniform_real_distribution<uint32_t> distribution(0, UINT32_MAX);
+  std::uniform_int_distribution<uint32_t> distribution(0, UINT32_MAX);
   return distribution(random_engine);
 }
 
@@ -302,7 +302,7 @@ void HoldBackQueue::Deliver(const msg::SeqMessage& seq_msg,
 
 void Process::TotalOrder(deliverMsgFn deliver) {
   // Launch a multicast sender for each message.
-  for (int i = 0; i < send_count_; ++i) {
+  for (unsigned int i = 0; i < send_count_; ++i) {
     LaunchMulticastSender();
   }
   server_.Listen(
