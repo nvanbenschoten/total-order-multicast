@@ -1,2 +1,2 @@
 # total-order-multicast
-An implementation of the ISIS total order multicast algorithm
+An implementation of the ISIS Total Order Multicast Algorithm
