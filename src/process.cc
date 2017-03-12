@@ -426,31 +426,28 @@ void Process::LaunchMulticastSender() {
     data_msg.data = RandomData();
 
     // Multicasts the message to everyone and record response sequence numbers.
+    MaybeDelaySend();
     std::vector<uint32_t> seqs(processes_.size());
-    threadutil::ThreadGroup sender_threads;
     for (unsigned int pid = 0; pid < processes_.size(); ++pid) {
       udp::ClientPtr client = ClientForId(pid);
-      sender_threads.AddThread([this, &seqs, client, pid, &data_msg, msg_id] {
-        // Called on each ack attempt. Validate the ack and update the seqs
-        // vector based on the provided sequence number in the acknowledgement.
-        auto handle_ack = [this, &seqs, pid, &data_msg, msg_id](
-            udp::ClientPtr _, char* buf, size_t n) {
-          auto ack_msg = AckMsgFromBuf(buf, n);
-          if (!ack_msg || !ValidAckMsg(*ack_msg, id_, msg_id, pid)) {
-            // If the ack message was not valid, try again.
-            // logging::out << "Received invalid ack: " << *ack_msg << "\n";
-            return udp::ServerAction::Continue;
-          }
-          // Record the sequence number on the ack.
-          seqs[pid] = ack_msg->proposed_seq;
-          return udp::ServerAction::Stop;
-        };
 
-        MaybeDelaySend();
-        SendDataMsg(client, handle_ack, data_msg);
-      });
+      // Called on each ack attempt. Validate the ack and update the seqs
+      // vector based on the provided sequence number in the acknowledgement.
+      auto handle_ack = [this, &seqs, pid, &data_msg, msg_id](
+          udp::ClientPtr _, char* buf, size_t n) {
+        auto ack_msg = AckMsgFromBuf(buf, n);
+        if (!ack_msg || !ValidAckMsg(*ack_msg, id_, msg_id, pid)) {
+          // If the ack message was not valid, try again.
+          // logging::out << "Received invalid ack: " << *ack_msg << "\n";
+          return udp::ServerAction::Continue;
+        }
+        // Record the sequence number on the ack.
+        seqs[pid] = ack_msg->proposed_seq;
+        return udp::ServerAction::Stop;
+      };
+
+      SendDataMsg(client, handle_ack, data_msg);
     }
-    sender_threads.JoinAll();
 
     // Determine the maximum sequence number from all receivers. This is the
     // final sequence number for the multicast message.
@@ -474,14 +471,11 @@ void Process::LaunchMulticastSender() {
     seq_msg.final_seq_proposer = final_seq_proposer;
 
     // Multicast final_seq to all processes.
+    MaybeDelaySend();
     for (unsigned int pid = 0; pid < processes_.size(); ++pid) {
       udp::ClientPtr client = ClientForId(pid);
-      sender_threads.AddThread([this, client, &seq_msg] {
-        MaybeDelaySend();
-        SendSeqMsg(client, seq_msg);
-      });
+      SendSeqMsg(client, seq_msg);
     }
-    sender_threads.JoinAll();
   });
 }
 
