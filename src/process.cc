@@ -227,14 +227,37 @@ bool operator<(const PendingMessage& lhs, const PendingMessage& rhs) {
   return false;
 }
 
+std::experimental::optional<msg::AckMessage> HoldBackQueue::Lookup(
+    const msg::DataMessage& data_msg) {
+  PendingMessageKey pmk;
+  pmk.sender = data_msg.sender;
+  pmk.msg_id = data_msg.msg_id;
+
+  auto old_pms_it = pending_seqs_.find(pmk);
+  if (old_pms_it == pending_seqs_.end()) {
+    // The message is not already in the queue.
+    return {};
+  }
+
+  // Create the msg::AckMessage
+  msg::AckMessage old_ack_msg;
+  old_ack_msg.sender = data_msg.sender;
+  old_ack_msg.msg_id = data_msg.msg_id;
+  old_ack_msg.proposed_seq = old_pms_it->second.seq;
+  old_ack_msg.proposer = old_pms_it->second.seq_proposer;
+  return old_ack_msg;
+}
+
 void HoldBackQueue::InsertPending(const msg::AckMessage& ack_msg,
                                   uint32_t data) {
+  // Insert into the sequence map so that we can index into this later in
+  // constant time, allowing us to find the entry in the ordered set in log time
+  // instead of linear time.
   PendingMessageKey pmk;
   pmk.sender = ack_msg.sender;
   pmk.msg_id = ack_msg.msg_id;
   if (pending_seqs_.count(pmk)) {
-    logging::out << "Received identical message " << ack_msg << " twice\n";
-    return;
+    throw std::invalid_argument("existing pending message in HoldBackQueue");
   }
 
   PendingMessageSeq pms;
@@ -242,6 +265,9 @@ void HoldBackQueue::InsertPending(const msg::AckMessage& ack_msg,
   pms.seq_proposer = ack_msg.proposer;
   pending_seqs_[pmk] = pms;
 
+  // Insert into the ordered set, initially with the "deliverable" flag set to
+  // false. All messages that sort after this message will have to wait to be
+  // delivered, even if they themselves are "deliverable".
   PendingMessage pm;
   pm.pmk = pmk;
   pm.pms = pms;
@@ -255,16 +281,23 @@ void HoldBackQueue::InsertPending(const msg::AckMessage& ack_msg,
 
 void HoldBackQueue::Deliver(const msg::SeqMessage& seq_msg,
                             const deliverMsgFn deliver) {
+  // Look up the messages old sequence information in the sequence map using the
+  // messages uniquely defining information. This allows us to find the pending
+  // message in the ordered set faster.
   PendingMessageKey pmk;
   pmk.sender = seq_msg.sender;
   pmk.msg_id = seq_msg.msg_id;
-  if (!pending_seqs_.count(pmk)) {
+
+  auto old_pms_it = pending_seqs_.find(pmk);
+  if (old_pms_it == pending_seqs_.end()) {
+    // Return without error to permit message replays.
     logging::out << "Unknown SeqMessage " << seq_msg << "...\n";
     return;
   }
 
-  PendingMessageSeq old_pms = pending_seqs_.at(pmk);
-  pending_seqs_.erase(pmk);
+  // Remove the message from the sequence cache.
+  PendingMessageSeq old_pms = old_pms_it->second;
+  pending_seqs_.erase(old_pms_it);
 
   // Remove old pending message.
   PendingMessage pm;
@@ -282,7 +315,7 @@ void HoldBackQueue::Deliver(const msg::SeqMessage& seq_msg,
   pm.deliverable = true;
   ordering_.insert(pm);
 
-  // Iterate through map and deliver messages that an be delivered.
+  // Iterate through map and deliver messages that can be delivered.
   for (auto it = ordering_.begin(); it != ordering_.end() /* not hoisted */;) {
     if (!it->deliverable) {
       break;
@@ -305,6 +338,8 @@ void Process::TotalOrder(deliverMsgFn deliver) {
   for (unsigned int i = 0; i < send_count_; ++i) {
     LaunchMulticastSender();
   }
+
+  // Launch a server, which will block indefinitely.
   server_.Listen(
       // Called on all incoming Data Messages.
       [this, deliver](udp::ClientPtr client, char* buf, size_t n) {
@@ -344,14 +379,22 @@ void Process::HandleDataMsg(const udp::ClientPtr client, char* buf, size_t n) {
   }
   logging::out << "Received message " << *data_msg << "\n";
 
-  msg::AckMessage ack_msg;
-  ack_msg.sender = data_msg->sender;
-  ack_msg.msg_id = data_msg->msg_id;
-  ack_msg.proposed_seq = NextSeqNum();
-  ack_msg.proposer = id_;
-  SendAckMsg(client, ack_msg);
+  // If we have already seen this message, send back the old ack so that the
+  // sequence number does not change.
+  auto ack_msg = hold_back_queue_.Lookup(*data_msg);
+  if (!ack_msg) {
+    // We have not already seen this message, so insert it into the
+    // HoldBackQueue.
+    ack_msg->sender = data_msg->sender;
+    ack_msg->msg_id = data_msg->msg_id;
+    ack_msg->proposed_seq = NextSeqNum();
+    ack_msg->proposer = id_;
 
-  hold_back_queue_.InsertPending(ack_msg, data_msg->data);
+    hold_back_queue_.InsertPending(*ack_msg, data_msg->data);
+  }
+
+  // Respond to the sender.
+  SendAckMsg(client, *ack_msg);
 }
 
 void Process::HandleSeqMsg(const udp::ClientPtr client, char* buf, size_t n,
@@ -363,12 +406,17 @@ void Process::HandleSeqMsg(const udp::ClientPtr client, char* buf, size_t n,
   }
   logging::out << "Received message " << *seq_msg << "\n";
 
+  // Forward our sequence number so that it is always larger than any other
+  // we have seen.
+  ForwardSeqNum(seq_msg->final_seq);
+
+  // Respond to the sender.
   msg::SeqAckMessage seqack_msg;
   seqack_msg.sender = seq_msg->sender;
   seqack_msg.msg_id = seq_msg->msg_id;
   SendSeqAckMsg(client, seqack_msg);
 
-  ForwardSeqNum(seq_msg->final_seq);
+  // Deliver the message through the HoldBackQueue.
   hold_back_queue_.Deliver(*seq_msg, deliver);
 }
 
@@ -416,7 +464,7 @@ uint32_t Process::UniqueID() { return RandomUint32(); }
 uint32_t Process::RandomData() { return RandomUint32(); }
 
 void Process::LaunchMulticastSender() {
-  // TODO add some nondeterministic behavior here.
+  // Run in a new thread to avoid blocking.
   multicast_threads_.AddThread([this] {
     // Create the DataMessage.
     uint32_t msg_id = UniqueID();
@@ -438,7 +486,6 @@ void Process::LaunchMulticastSender() {
         auto ack_msg = AckMsgFromBuf(buf, n);
         if (!ack_msg || !ValidAckMsg(*ack_msg, id_, msg_id, pid)) {
           // If the ack message was not valid, try again.
-          // logging::out << "Received invalid ack: " << *ack_msg << "\n";
           return udp::ServerAction::Continue;
         }
         // Record the sequence number on the ack.
@@ -455,8 +502,8 @@ void Process::LaunchMulticastSender() {
     uint32_t final_seq_proposer = 0;
     for (unsigned int pid = 0; pid < processes_.size(); ++pid) {
       uint32_t seq = seqs.at(pid);
-      // seq > final_seq implicitly chooses the smallest final_seq_proposer is
-      // case of ties for the proposed seqs.
+      // seq > final_seq while iterating from 0 to pid_max selects the smallest
+      // final_seq_proposer in case of ties for the proposed seqs.
       if (seq > final_seq) {
         final_seq = seq;
         final_seq_proposer = pid;

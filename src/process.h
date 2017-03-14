@@ -141,24 +141,31 @@ typedef std::function<void(msg::SeqMessage&)> deliverMsgFn;
 // HoldBackQueue is a queue that ...
 class HoldBackQueue {
  public:
+  // Lookup checks if the data message is already in the HoldBackQueue,
+  // and if so, returns the corresponding AckMessage. This is necessary to
+  // prevent replayed messages from being acknowledged with larger sequence
+  // numbers than those in the HoldBackQueue.
+  std::experimental::optional<msg::AckMessage> Lookup(
+      const msg::DataMessage& data_msg);
+
   // Inserts the pending message into the HoldBackQueue using the information
   // provided in the AckMessage along with the message's data.
   //
-  // Complexity: O(log n) where n is the size of the HoldBackQueue.
+  // Complexity: O(log(n)) where n is the size of the HoldBackQueue.
   void InsertPending(const msg::AckMessage& ack_msg, uint32_t data);
 
   // Updates the pending message corresponding to the SeqMessage and delivers
   // all newly deliverable messages by calling the deliver function.
   //
-  // Complexity: O(log n + m) where n is the size of the HoldBackQueue and m
+  // Complexity: O(log(n) + m) where n is the size of the HoldBackQueue and m
   // is the number of messages that can be delivered after updating the
   // SeqMessage's corresponding message.
   void Deliver(const msg::SeqMessage& seq_msg, const deliverMsgFn deliver);
 
  private:
-  // The unordered map and ordered set combination is similar to a linked
-  // hashmap in that it allows O(log n) insertion time and O(log n) update time.
-  // The unordered_map provides a hashed mapping between a message's uniquely
+  // The unordered map and ordered set combination is similar in spirit to a
+  // LinkedHashMap. It exposes O(log(n)) insertion time and O(log(n)) update
+  // time. The unordered_map provides a hashed mapping from a message's uniquely
   // identifying information (sender, msg_id). This hashes to the rest of the
   // pending message information in constant time so that it can be recovered
   // later without a full search of the ordered set when updating the delivery
