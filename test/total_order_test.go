@@ -1,10 +1,11 @@
-package main
+package totalorder
 
 import (
 	"bufio"
 	"bytes"
 	"fmt"
 	"io/ioutil"
+	"math/rand"
 	"os"
 	"os/exec"
 	"reflect"
@@ -13,6 +14,7 @@ import (
 	"sync"
 	"syscall"
 	"testing"
+	"time"
 )
 
 const (
@@ -48,6 +50,7 @@ func setupHostfile(t *testing.T, numProcs int) string {
 func launchProcess(
 	hostfile string, numMessages, pid int, delays bool, msgc chan<- string,
 ) (kill func(), err error) {
+	// Create command line arguments.
 	args := []string{
 		"--hostfile", hostfile,
 		"--count", strconv.Itoa(numMessages),
@@ -76,7 +79,7 @@ func launchProcess(
 		return kill, err
 	}
 
-	// Scan in each message from the subprocess.
+	// Scan in each message from the subprocess and send results on channel.
 	scanner := bufio.NewScanner(stdout)
 	for msgsLeft := numMessages; msgsLeft > 0 && scanner.Scan(); msgsLeft-- {
 		msgc <- scanner.Text()
@@ -222,4 +225,29 @@ func TestTotalOrderLarge(t *testing.T) {
 }
 func TestTotalOrderLargeWithDelays(t *testing.T) {
 	testTotalOrderLarge(t, true)
+}
+
+func testTotalOrderRandom(t *testing.T, delays bool) {
+	rand.Seed(time.Now().UTC().UnixNano())
+	rand1To10 := func() int {
+		return rand.Intn(10) + 1
+	}
+
+	const trials = 10
+	for i := 0; i < trials; i++ {
+		Subtest(t, "RandomTrial", func(t *testing.T) {
+			numProcs := rand1To10()
+			msgCounts := make([]int, numProcs)
+			for i := range msgCounts {
+				msgCounts[i] = rand1To10()
+			}
+			testTotalOrder(t, msgCounts, delays)
+		})
+	}
+}
+func TestTotalOrderRandom(t *testing.T) {
+	testTotalOrderRandom(t, false)
+}
+func TestTotalOrderRandomWithDelays(t *testing.T) {
+	testTotalOrderRandom(t, true)
 }
