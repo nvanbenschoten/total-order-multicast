@@ -15,7 +15,9 @@
 #include <iostream>
 #include <memory>
 #include <mutex>
+#include <random>
 #include <string>
+#include <thread>
 
 #include "log.h"
 #include "net.h"
@@ -100,6 +102,10 @@ class Client : public std::enable_shared_from_this<Client> {
   std::recursive_mutex sockfd_mutex_;
   const Socket sockfd_;
   const SocketAddress remote_address_;
+
+  // WaitBackoff synchronously blocks for a short randomized amount of time
+  // multiplied by the provided multiplier.
+  void WaitBackoff(unsigned int multiplier) const;
 };
 
 // Listens for incoming UDP messages.

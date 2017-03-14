@@ -80,6 +80,7 @@ void Client::Send(const char *buf, size_t size) {
 void Client::SendWithAck(const char *buf, size_t size, unsigned int attempts,
                          OnReceiveFn validAck) {
   std::lock_guard<std::recursive_mutex> guard(sockfd_mutex_);
+  int backoff_mult = 1;
   bool noLimit = attempts == kUnlimitedAttempts;
   for (; noLimit || attempts > 0; --attempts) {
     // Send the message to the client.
@@ -100,6 +101,9 @@ void Client::SendWithAck(const char *buf, size_t size, unsigned int attempts,
     // anything else, throw an exception.
     if (n < 0) {
       if (IsErrnoTimeout()) {
+        // Wait for a backoff period.
+        WaitBackoff(backoff_mult);
+        backoff_mult <<= 1;
         continue;
       } else {
         throw net::ReceiveException();
@@ -112,6 +116,22 @@ void Client::SendWithAck(const char *buf, size_t size, unsigned int attempts,
       return;
     }
   }
+}
+
+void Client::WaitBackoff(unsigned int multiplier) const {
+  static thread_local std::default_random_engine random_engine(
+      std::chrono::system_clock::now().time_since_epoch().count());
+
+  // Wait on the order of 10 ms * multiplier.
+  auto delay_base = std::chrono::milliseconds{10}.count();
+  std::poisson_distribution<int> poisson(delay_base);
+  int delay = poisson(random_engine);
+  if (delay <= 0) {
+    return;
+  }
+  delay *= multiplier;
+  std::this_thread::sleep_for(std::chrono::milliseconds{delay});
+  return;
 }
 
 Server::Server(unsigned short port, std::chrono::microseconds timeout)
