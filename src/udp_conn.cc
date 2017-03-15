@@ -80,7 +80,7 @@ void Client::Send(const char *buf, size_t size) {
 void Client::SendWithAck(const char *buf, size_t size, unsigned int attempts,
                          OnReceiveFn validAck) {
   std::lock_guard<std::recursive_mutex> guard(sockfd_mutex_);
-  int backoff_mult = 1;
+  unsigned int backoff_mult = 1;
   bool noLimit = attempts == kUnlimitedAttempts;
   for (; noLimit || attempts > 0; --attempts) {
     // Send the message to the client.
@@ -103,7 +103,9 @@ void Client::SendWithAck(const char *buf, size_t size, unsigned int attempts,
       if (IsErrnoTimeout()) {
         // Wait for a backoff period.
         WaitBackoff(backoff_mult);
-        backoff_mult <<= 1;
+        if (backoff_mult < kMaxBackoffMultiplier) {
+          backoff_mult <<= 1;
+        }
         continue;
       } else {
         throw net::ReceiveException();

@@ -30,4 +30,4 @@ clean:
 .PHONY: test
 test: $(TARGET)
 	@pkill $(BINARY); true
-	@$(GO) test -v ./test
+	@$(GO) test -v -timeout 2m ./test

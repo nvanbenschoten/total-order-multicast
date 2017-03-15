@@ -138,13 +138,16 @@ bool operator<(const PendingMessage& lhs, const PendingMessage& rhs);
 // A function that is called when a message is delivered.
 typedef std::function<void(msg::SeqMessage&)> deliverMsgFn;
 
-// HoldBackQueue is a queue that ...
+// HoldBackQueue is a queue that buffers pending DataMessages until they can
+// be delivered.
 class HoldBackQueue {
  public:
   // Lookup checks if the data message is already in the HoldBackQueue,
   // and if so, returns the corresponding AckMessage. This is necessary to
   // prevent replayed messages from being acknowledged with larger sequence
   // numbers than those in the HoldBackQueue.
+  //
+  // Complexity: O(1) where n is the size of the HoldBackQueue.
   std::experimental::optional<msg::AckMessage> Lookup(
       const msg::DataMessage& data_msg);
 
@@ -152,7 +155,7 @@ class HoldBackQueue {
   // provided in the AckMessage along with the message's data.
   //
   // Complexity: O(log(n)) where n is the size of the HoldBackQueue.
-  void InsertPending(const msg::AckMessage& ack_msg, uint32_t data);
+  void InsertUndeliverable(const msg::AckMessage& ack_msg, uint32_t data);
 
   // Updates the pending message corresponding to the SeqMessage and delivers
   // all newly deliverable messages by calling the deliver function.
@@ -160,17 +163,19 @@ class HoldBackQueue {
   // Complexity: O(log(n) + m) where n is the size of the HoldBackQueue and m
   // is the number of messages that can be delivered after updating the
   // SeqMessage's corresponding message.
-  void Deliver(const msg::SeqMessage& seq_msg, const deliverMsgFn deliver);
+  void SetDeliverable(const msg::SeqMessage& seq_msg,
+                      const deliverMsgFn deliver);
 
  private:
   // The unordered map and ordered set combination is similar in spirit to a
-  // LinkedHashMap. It exposes O(log(n)) insertion time and O(log(n)) update
-  // time. The unordered_map provides a hashed mapping from a message's uniquely
-  // identifying information (sender, msg_id). This hashes to the rest of the
-  // pending message information in constant time so that it can be recovered
-  // later without a full search of the ordered set when updating the delivery
-  // state. The ordered set maintains an ordered tree so that delivery can be
-  // performed by scanning from the beginning of the tree to the end.
+  // LinkedHashMap. It exposes O(1) lookup time, O(log(n)) insertion time, and
+  // O(log(n)) update time. The unordered_map provides a hashed mapping from a
+  // message's uniquely identifying information (sender, msg_id). This hashes to
+  // the rest of the pending message information in constant time so that it can
+  // be recovered later without a full search of the ordered set when updating
+  // the delivery state. The ordered set maintains an ordered tree so that
+  // delivery can be performed by scanning from the beginning of the tree to the
+  // end.
   std::unordered_map<PendingMessageKey, PendingMessageSeq, PMKHash>
       pending_seqs_;
   // The ordering of pending messages, based on the comparator defined for
@@ -183,24 +188,22 @@ class HoldBackQueue {
 class Process {
  public:
   Process(const ProcessList& processes, unsigned int id,
-          unsigned int send_count, unsigned short server_port, bool delays)
+          unsigned short server_port, bool delays)
       : processes_(processes),
         clients_(ClientsForProcessList(processes)),
         id_(id),
-        send_count_(send_count),
         server_(server_port),
         delays_(delays),
         seq_counter_(0) {}
 
   // TotalOrder runs the ISIS Total Order Multicast Algorithm and calls the
   // provided deliver function for each message delivered.
-  void TotalOrder(const deliverMsgFn deliver);
+  void TotalOrder(unsigned int send_count, const deliverMsgFn deliver);
 
  private:
   const ProcessList processes_;
   const UdpClientMap clients_;
   const unsigned int id_;
-  const unsigned int send_count_;
   const udp::Server server_;
   const bool delays_;
 
@@ -222,9 +225,8 @@ class Process {
   // provided. Blocks synchonously if delaying.
   void MaybeDelaySend();
 
-  // A thread-safe counter for sequence numbers of messages originating from
-  // this process.
-  std::mutex seq_counter_mutex_;
+  // A counter for sequence numbers of messages originating from this process.
+  // Follows similar rules to a Lamport clock.
   uint32_t seq_counter_;
   // NextSeqNum returns the next available sequence number.
   uint32_t NextSeqNum();

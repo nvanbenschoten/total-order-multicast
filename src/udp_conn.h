@@ -67,6 +67,7 @@ typedef std::function<ServerAction()> OnTimeout;
 
 const auto kNoTimeout = std::chrono::microseconds{0};
 const unsigned int kUnlimitedAttempts = 0;
+const unsigned int kMaxBackoffMultiplier = 64;
 
 // Provides an interface to send UDP messages to a remote server.
 // Sending through a client is thread-safe.

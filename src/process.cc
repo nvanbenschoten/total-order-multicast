@@ -248,8 +248,8 @@ std::experimental::optional<msg::AckMessage> HoldBackQueue::Lookup(
   return old_ack_msg;
 }
 
-void HoldBackQueue::InsertPending(const msg::AckMessage& ack_msg,
-                                  uint32_t data) {
+void HoldBackQueue::InsertUndeliverable(const msg::AckMessage& ack_msg,
+                                        uint32_t data) {
   // Insert into the sequence map so that we can index into this later in
   // constant time, allowing us to find the entry in the ordered set in log time
   // instead of linear time.
@@ -279,8 +279,8 @@ void HoldBackQueue::InsertPending(const msg::AckMessage& ack_msg,
   ordering_.insert(pm);
 }
 
-void HoldBackQueue::Deliver(const msg::SeqMessage& seq_msg,
-                            const deliverMsgFn deliver) {
+void HoldBackQueue::SetDeliverable(const msg::SeqMessage& seq_msg,
+                                   const deliverMsgFn deliver) {
   // Look up the messages old sequence information in the sequence map using the
   // messages uniquely defining information. This allows us to find the pending
   // message in the ordered set faster.
@@ -333,9 +333,9 @@ void HoldBackQueue::Deliver(const msg::SeqMessage& seq_msg,
   }
 }
 
-void Process::TotalOrder(deliverMsgFn deliver) {
+void Process::TotalOrder(unsigned int send_count, deliverMsgFn deliver) {
   // Launch a multicast sender for each message.
-  for (unsigned int i = 0; i < send_count_; ++i) {
+  for (unsigned int i = 0; i < send_count; ++i) {
     LaunchMulticastSender();
   }
 
@@ -390,7 +390,7 @@ void Process::HandleDataMsg(const udp::ClientPtr client, char* buf, size_t n) {
     ack_msg->proposed_seq = NextSeqNum();
     ack_msg->proposer = id_;
 
-    hold_back_queue_.InsertPending(*ack_msg, data_msg->data);
+    hold_back_queue_.InsertUndeliverable(*ack_msg, data_msg->data);
   }
 
   // Respond to the sender.
@@ -416,8 +416,9 @@ void Process::HandleSeqMsg(const udp::ClientPtr client, char* buf, size_t n,
   seqack_msg.msg_id = seq_msg->msg_id;
   SendSeqAckMsg(client, seqack_msg);
 
-  // Deliver the message through the HoldBackQueue.
-  hold_back_queue_.Deliver(*seq_msg, deliver);
+  // Set the message as deliverable in the HoldBackQueue. This may result in one
+  // or more messages being delivered.
+  hold_back_queue_.SetDeliverable(*seq_msg, deliver);
 }
 
 void Process::MaybeDelaySend() {
@@ -449,12 +450,8 @@ void Process::MaybeDelaySend() {
   return;
 }
 
-uint32_t Process::NextSeqNum() {
-  std::lock_guard<std::mutex> guard(seq_counter_mutex_);
-  return ++seq_counter_;
-}
+uint32_t Process::NextSeqNum() { return ++seq_counter_; }
 void Process::ForwardSeqNum(uint32_t seen) {
-  std::lock_guard<std::mutex> guard(seq_counter_mutex_);
   if (seen > seq_counter_) {
     seq_counter_ = seen;
   }

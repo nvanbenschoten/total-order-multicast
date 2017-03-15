@@ -156,10 +156,10 @@ int main(int argc, const char** argv) {
     auto server_port = processes.at(id_val).port();
 
     // Create the process with the command line options.
-    process::Process p(processes, id_val, count_val, server_port, delays);
+    process::Process p(processes, id_val, server_port, delays);
 
     // Run the total order algorithm.
-    p.TotalOrder([id_val](msg::SeqMessage& seq_msg) {
+    p.TotalOrder(count_val, [id_val](msg::SeqMessage& seq_msg) {
       std::cout << id_val << ": Processed message " << seq_msg.msg_id
                 << " from sender " << seq_msg.sender << " with seq ("
                 << seq_msg.final_seq << ", " << seq_msg.final_seq_proposer
