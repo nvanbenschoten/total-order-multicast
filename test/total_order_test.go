@@ -218,7 +218,7 @@ func TestTotalOrderDualSendersWithDelays(t *testing.T) {
 }
 
 func testTotalOrderLarge(t *testing.T, delays bool) {
-	testTotalOrder(t, []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12}, delays)
+	testTotalOrder(t, []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10}, delays)
 }
 func TestTotalOrderLarge(t *testing.T) {
 	testTotalOrderLarge(t, false)
@@ -229,17 +229,17 @@ func TestTotalOrderLargeWithDelays(t *testing.T) {
 
 func testTotalOrderRandom(t *testing.T, delays bool) {
 	rand.Seed(time.Now().UTC().UnixNano())
-	rand1To10 := func() int {
-		return rand.Intn(10) + 1
+	rand1To8 := func() int {
+		return rand.Intn(8) + 1
 	}
 
 	const trials = 10
 	for i := 0; i < trials; i++ {
 		Subtest(t, "RandomTrial", func(t *testing.T) {
-			numProcs := rand1To10()
+			numProcs := rand1To8()
 			msgCounts := make([]int, numProcs)
 			for i := range msgCounts {
-				msgCounts[i] = rand1To10()
+				msgCounts[i] = rand1To8()
 			}
 			testTotalOrder(t, msgCounts, delays)
 		})
