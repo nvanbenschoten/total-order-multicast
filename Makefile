@@ -4,7 +4,8 @@ GO  ?= go
 SRCDIR := src
 BUILDDIR := build
 TARGETDIR := bin
-TARGET := $(TARGETDIR)/proj2
+BINARY := proj2
+TARGET := $(TARGETDIR)/$(BINARY)
 
 SRCEXT := cc
 SOURCES := $(shell find $(SRCDIR) -type f -name *.$(SRCEXT))
@@ -28,4 +29,5 @@ clean:
 
 .PHONY: test
 test: $(TARGET)
+	@pkill $(BINARY); true
 	@$(GO) test -v ./test
